@@ -4,6 +4,7 @@ import { test } from "node:test"
 import {
   ALERT_CLOSE,
   ALERT_OPEN,
+  capSteps,
   isHourlyOrSlowerCron,
   scrubWebhookQuery,
   truncate,
@@ -163,4 +164,35 @@ test("scrub: the URL-encoded secret and a search field are replaced", () => {
   scrubWebhookQuery(event, secret)
   assert.doesNotMatch(JSON.stringify(event), /a b|a%20b|c%2Bd/)
   assert.equal("search" in event, false)
+})
+
+async function* fakeRun(progress: number) {
+  yield { type: "STARTED" }
+  for (let i = 0; i < progress; i++) yield { type: "PROGRESS" }
+  yield { type: "COMPLETE" }
+}
+
+async function drain(events: AsyncIterable<{ type: string }>) {
+  const types: string[] = []
+  for await (const event of events) types.push(event.type)
+  return types
+}
+
+test("capSteps: a run within the cap passes through whole", async () => {
+  const types = await drain(capSteps(fakeRun(40), 40))
+  assert.equal(types.length, 42)
+  assert.equal(types.at(-1), "COMPLETE")
+})
+
+test("capSteps: the step after the cap stops the run and closes the stream", async () => {
+  let closed = false
+  async function* run() {
+    try {
+      yield* fakeRun(41)
+    } finally {
+      closed = true
+    }
+  }
+  await assert.rejects(drain(capSteps(run(), 40)), /stopped after 40 steps/)
+  assert.equal(closed, true)
 })

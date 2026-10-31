@@ -64,3 +64,22 @@ export function scrubWebhookQuery(
     }
   }
 }
+
+// The most steps one webTask may take. TinyFish refuses agent_config.max_steps on this
+// account, so the cap is counted here instead.
+export const WEB_TASK_MAX_STEPS = 40
+
+// Passes a TinyFish event stream through, and throws on the step after the `max`th.
+// Leaving the loop closes the stream; the caller cancels and meters the run.
+export async function* capSteps<T extends { type: string }>(
+  events: AsyncIterable<T>,
+  max: number,
+): AsyncGenerator<T> {
+  let steps = 0
+  for await (const event of events) {
+    if (event.type === "PROGRESS" && ++steps > max) {
+      throw new Error(`The web task was stopped after ${max} steps.`)
+    }
+    yield event
+  }
+}
