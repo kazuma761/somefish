@@ -1,0 +1,219 @@
+import { relations } from "drizzle-orm"
+import {
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core"
+import { createInsertSchema } from "drizzle-zod"
+import { nanoid } from "nanoid"
+import { z } from "zod"
+
+export const bots = pgTable(
+  "bots",
+  {
+    id: text()
+      .primaryKey()
+      .$defaultFn(() => nanoid()),
+    // Clerk user ID
+    userId: text().notNull(),
+    name: text().notNull(),
+    // Seed for the bot's face
+    avatar: text()
+      .notNull()
+      .$defaultFn(() => nanoid()),
+    // What the bot is for, in a phrase
+    job: text().notNull(),
+    // How it should go about the job
+    instructions: text(),
+    // Daytona sandbox ID, created with the bot and deleted with it
+    sandboxId: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("bots_user_id_idx").on(table.userId)]
+)
+
+export const chatKind = pgEnum("chat_kind", ["direct", "group"])
+
+export const chats = pgTable(
+  "chats",
+  {
+    id: text()
+      .primaryKey()
+      .$defaultFn(() => nanoid()),
+    // Clerk user ID
+    userId: text().notNull(),
+    kind: chatKind().notNull().default("direct"),
+    // Null for direct chats, which use the bot's name
+    name: text(),
+    lastMessagePreview: text(),
+    lastMessageAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("chats_user_id_idx").on(table.userId)]
+)
+
+export const chatMembers = pgTable(
+  "chat_members",
+  {
+    chatId: text()
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    botId: text()
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    joinedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.chatId, table.botId] }),
+    index("chat_members_bot_id_idx").on(table.botId),
+  ]
+)
+
+export const usageKind = pgEnum("usage_kind", ["ai", "sandbox", "web"])
+
+// The usage ledger: one row per metered event, only ever added to. What a user
+// has used in a billing period is the sum of their rows since it started.
+export const usageEntries = pgTable(
+  "usage_entries",
+  {
+    id: text()
+      .primaryKey()
+      .$defaultFn(() => nanoid()),
+    // Clerk user ID
+    userId: text().notNull(),
+    kind: usageKind().notNull(),
+    // Millionths of a dollar of model spend for "ai", seconds a sandbox was
+    // running for "sandbox", millionths of a dollar of TinyFish spend for "web"
+    amount: integer().notNull(),
+    // Names the event that was metered, so writing it twice counts it once
+    idempotencyKey: text().notNull().unique(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("usage_entries_user_id_created_at_idx").on(
+      table.userId,
+      table.createdAt
+    ),
+  ]
+)
+
+export const monitorType = pgEnum("monitor_type", ["page", "topic"])
+
+// A TinyFish monitor a bot keeps in a chat. The row goes with its bot or chat,
+// but TinyFish keeps running (and charging) until the monitor is cancelled there.
+export const monitors = pgTable(
+  "monitors",
+  {
+    // The TinyFish monitor ID
+    id: text().primaryKey(),
+    // Clerk user ID
+    userId: text().notNull(),
+    botId: text()
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    chatId: text()
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    type: monitorType().notNull(),
+    // The URL for "page", the search query for "topic"
+    target: text().notNull(),
+    // The condition the person cares about
+    purpose: text().notNull(),
+    scheduleCron: text().notNull(),
+    // Set when the web allowance ran out and the monitor was paused at TinyFish
+    pausedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("monitors_user_id_idx").on(table.userId),
+    index("monitors_bot_id_idx").on(table.botId),
+    index("monitors_chat_id_idx").on(table.chatId),
+  ]
+)
+
+export const botsRelations = relations(bots, ({ many }) => ({
+  memberships: many(chatMembers),
+  monitors: many(monitors),
+}))
+
+export const chatsRelations = relations(chats, ({ many }) => ({
+  members: many(chatMembers),
+  monitors: many(monitors),
+}))
+
+export const monitorsRelations = relations(monitors, ({ one }) => ({
+  bot: one(bots, {
+    fields: [monitors.botId],
+    references: [bots.id],
+  }),
+  chat: one(chats, {
+    fields: [monitors.chatId],
+    references: [chats.id],
+  }),
+}))
+
+export const chatMembersRelations = relations(chatMembers, ({ one }) => ({
+  chat: one(chats, {
+    fields: [chatMembers.chatId],
+    references: [chats.id],
+  }),
+  bot: one(bots, {
+    fields: [chatMembers.botId],
+    references: [bots.id],
+  }),
+}))
+
+// What a user may submit; userId comes from the session, the rest is generated
+export const botInsertSchema = createInsertSchema(bots, {
+  name: (schema) =>
+    schema
+      .trim()
+      .min(1, "Give your bot a name.")
+      .max(50, "Keep it under 50 characters."),
+  job: (schema) =>
+    schema
+      .trim()
+      .min(1, "Tell your bot what its job is.")
+      .max(100, "Keep it under 100 characters."),
+  instructions: (schema) =>
+    schema.trim().max(4000, "Keep it under 4000 characters."),
+}).omit({ id: true, userId: true, sandboxId: true, createdAt: true })
+
+// A group chat is a name and the bots in it; direct chats are made with their bot
+export const groupChatInsertSchema = createInsertSchema(chats, {
+  name: z
+    .string()
+    .trim()
+    .min(1, "Give the group a name.")
+    .max(50, "Keep it under 50 characters."),
+})
+  .omit({
+    id: true,
+    userId: true,
+    kind: true,
+    lastMessagePreview: true,
+    lastMessageAt: true,
+    createdAt: true,
+  })
+  .extend({
+    botIds: z.array(z.string()).min(2, "Pick at least two bots."),
+  })
+
+export type Bot = typeof bots.$inferSelect
+export type NewBot = typeof bots.$inferInsert
+export type BotInsert = z.infer<typeof botInsertSchema>
+
+export type GroupChatInsert = z.infer<typeof groupChatInsertSchema>
+
+export type Chat = typeof chats.$inferSelect
+export type NewChat = typeof chats.$inferInsert
+export type UsageKind = (typeof usageKind.enumValues)[number]
+export type NewUsageEntry = typeof usageEntries.$inferInsert
+export type Monitor = typeof monitors.$inferSelect
+export type NewMonitor = typeof monitors.$inferInsert
+export type ChatMember =typeof chatMembers.$inferSelect
+export type NewChatMember = typeof chatMembers.$inferInsert

@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Skill",
+      "Bash(team/send.sh:*)",
+      "Bash(./team/send.sh:*)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run lint)",
+      "Bash(node --experimental-strip-types --test:*)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sleep:*)"
+    ],
+    "deny": [
+      "Read(./.env*)",
+      "Read(**/.env*)",
+      "Edit(./.env*)",
+      "Edit(**/.env*)",
+      "Write(./.env*)",
+      "Write(**/.env*)",
+      "Bash(* .env*)",
+      "Bash(*/.env*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git init:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git branch:*)",
+      "Bash(npx drizzle-kit generate:*)",
+      "Bash(npx drizzle-kit migrate:*)"
+    ]
+  }
+}
