@@ -292,7 +292,10 @@ export const chatAgent = chat
             bots.find((bot) => bot.id === (handoff.output as Handoff).botId)
 
           return current
-            ? { instructions: buildInstructions(current, group) }
+            ? {
+                // Without this the new bot tends to repeat the handoff and stop
+                instructions: `${buildInstructions(current, group)}\n\nA teammate just handed this request to you, ${current.name}, with this note: ${(handoff.input as { note: string }).note}\n\nThe handoff is finished. Do your part of the work now with your tools. Do not announce the handoff again.`,
+              }
             : undefined
         },
         stopWhen: [

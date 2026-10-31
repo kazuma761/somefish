@@ -6,7 +6,10 @@ import * as Sentry from "@sentry/nextjs"
 import { RefreshCwIcon } from "lucide-react"
 
 import { getDesktopUrl } from "@/actions/chat"
-import { AspectRatio } from "@/components/ui/aspect-ratio"
+import {
+  WebPreview,
+  WebPreviewBody,
+} from "@/components/ai-elements/web-preview"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -18,6 +21,8 @@ import {
 import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable"
 import { Spinner } from "@/components/ui/spinner"
 import { usePaywall } from "@/hooks/use-paywall"
+import type { LiveBrowser } from "@/components/live-browser"
+import { WEB_TASK_MAX_STEPS } from "@/lib/monitor-rules"
 
 type DesktopStatus = "idle" | "connecting" | "connected" | "disconnected"
 
@@ -30,6 +35,9 @@ type DesktopPanelContextValue = {
   attachScreen: (slot: HTMLElement) => void
   // Whether the screen takes mouse and keyboard input or is only watched
   setInteractive: (interactive: boolean) => void
+  // A web task's browser, shown instead of the desktop while it runs
+  liveBrowser: LiveBrowser | undefined
+  setLiveBrowser: (liveBrowser: LiveBrowser | undefined) => void
 }
 
 const DesktopPanelContext =
@@ -45,6 +53,11 @@ function useDesktopPanel() {
   return context
 }
 
+// Undefined outside a DesktopPanelProvider
+function useOptionalDesktopPanel() {
+  return React.useContext(DesktopPanelContext)
+}
+
 function DesktopPanelProvider({
   chatId,
   children,
@@ -54,6 +67,7 @@ function DesktopPanelProvider({
 }) {
   const [open, setOpen] = React.useState(false)
   const [status, setStatus] = React.useState<DesktopStatus>("idle")
+  const [liveBrowser, setLiveBrowser] = React.useState<LiveBrowser>()
   const { checkPlan, checkUsage } = usePaywall()
 
   // The VNC client draws into this element. It is never rendered by React, so
@@ -153,15 +167,24 @@ function DesktopPanelProvider({
   }, [])
 
   const value = React.useMemo(
-    () => ({ open, toggle, status, connect, attachScreen, setInteractive }),
-    [open, toggle, status, connect, attachScreen, setInteractive]
+    () => ({
+      open,
+      toggle,
+      status,
+      connect,
+      attachScreen,
+      setInteractive,
+      liveBrowser,
+      setLiveBrowser,
+    }),
+    [open, toggle, status, connect, attachScreen, setInteractive, liveBrowser]
   )
 
   return <DesktopPanelContext value={value}>{children}</DesktopPanelContext>
 }
 
 function DesktopPanel({ name }: { name: string }) {
-  const { open, status, connect, attachScreen, setInteractive } =
+  const { open, status, connect, attachScreen, setInteractive, liveBrowser } =
     useDesktopPanel()
   const [fullscreen, setFullscreen] = React.useState(false)
   const [panelSlot, setPanelSlot] = React.useState<HTMLDivElement | null>(null)
@@ -177,40 +200,61 @@ function DesktopPanel({ name }: { name: string }) {
     setInteractive(slot === dialogSlot)
   }, [dialogSlot, panelSlot, attachScreen, setInteractive])
 
-  if (!open) return null
+  if (!open && !liveBrowser) return null
 
-  const title = `${name}'s screen`
+  const title = `${name}'s computer`
 
   return (
     <>
       <ResizableHandle withHandle />
-      <ResizablePanel id="desktop" defaultSize="50%" minSize="20%">
-        <Dialog
-          open={fullscreen}
-          onOpenChange={(open, eventDetails) => {
-            // Escape belongs to the desktop; only the close button closes
-            if (!open && eventDetails.reason !== "close-press") return
-            setFullscreen(open)
-          }}
-          disablePointerDismissal
-        >
+      <ResizablePanel id="desktop" defaultSize="55%" minSize="20%">
+        {liveBrowser ? (
           <div className="flex h-full flex-col">
-            <div className="flex h-12 shrink-0 items-center justify-end px-4">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Reconnect"
-                disabled={status === "connecting"}
-                onClick={connect}
-              >
-                <RefreshCwIcon />
-              </Button>
+            <div className="flex h-12 shrink-0 items-center px-4">
+              <p className="text-sm font-medium">
+                Live browser, powered by TinyFish
+              </p>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col items-center gap-4 p-4 pt-0">
-              <AspectRatio
-                ratio={4 / 3}
-                className="w-full max-w-2xl overflow-hidden rounded-xl bg-muted ring-1 ring-foreground/10"
-              >
+            <div className="flex min-h-0 flex-1 flex-col gap-2 p-4 pt-0">
+              <WebPreview className="h-auto min-h-0 flex-1">
+                <WebPreviewBody
+                  src={liveBrowser.url}
+                  title="Live browser"
+                  referrerPolicy="no-referrer"
+                />
+              </WebPreview>
+              <p className="text-sm text-muted-foreground" aria-live="polite">
+                {liveBrowser.steps
+                  ? `Step ${liveBrowser.steps} / ${WEB_TASK_MAX_STEPS}`
+                  : "Starting"}
+                {liveBrowser.step ? `: ${liveBrowser.step}` : null}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <Dialog
+            open={fullscreen}
+            onOpenChange={(open, eventDetails) => {
+              // Escape belongs to the desktop; only the close button closes
+              if (!open && eventDetails.reason !== "close-press") return
+              setFullscreen(open)
+            }}
+            disablePointerDismissal
+          >
+            <div className="flex h-full flex-col">
+              <div className="flex h-12 shrink-0 items-center justify-between px-4">
+                <p className="text-sm font-medium">{title}</p>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Reconnect"
+                  disabled={status === "connecting"}
+                  onClick={connect}
+                >
+                  <RefreshCwIcon />
+                </Button>
+              </div>
+              <div className="relative m-4 mt-0 min-h-0 flex-1 overflow-hidden rounded-xl bg-muted ring-1 ring-foreground/10">
                 <div ref={setPanelSlot} className="absolute inset-0" />
                 {status === "connected" ? (
                   <DialogTrigger
@@ -226,23 +270,27 @@ function DesktopPanel({ name }: { name: string }) {
                     )}
                   </div>
                 )}
-              </AspectRatio>
-              <p className="text-sm text-muted-foreground">{title}</p>
+              </div>
             </div>
-          </div>
-          <DialogContent
-            initialFocus={false}
-            className="flex h-svh max-w-none flex-col gap-0 rounded-none p-0 ring-0 sm:max-w-none"
-          >
-            <DialogHeader className="h-12 shrink-0 justify-center border-b px-4">
-              <DialogTitle>{title}</DialogTitle>
-            </DialogHeader>
-            <div ref={setDialogSlot} className="min-h-0 flex-1 bg-muted" />
-          </DialogContent>
-        </Dialog>
+            <DialogContent
+              initialFocus={false}
+              className="flex h-svh max-w-none flex-col gap-0 rounded-none p-0 ring-0 sm:max-w-none"
+            >
+              <DialogHeader className="h-12 shrink-0 justify-center border-b px-4">
+                <DialogTitle>{title}</DialogTitle>
+              </DialogHeader>
+              <div ref={setDialogSlot} className="min-h-0 flex-1 bg-muted" />
+            </DialogContent>
+          </Dialog>
+        )}
       </ResizablePanel>
     </>
   )
 }
 
-export { DesktopPanel, DesktopPanelProvider, useDesktopPanel }
+export {
+  DesktopPanel,
+  DesktopPanelProvider,
+  useDesktopPanel,
+  useOptionalDesktopPanel,
+}

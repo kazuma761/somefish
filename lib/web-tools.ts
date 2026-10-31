@@ -63,6 +63,8 @@ export type WebTaskPreliminaryOutput = {
   runId?: string
   liveUrl?: string
   step?: string
+  // Browser steps taken so far; the run is stopped past WEB_TASK_MAX_STEPS
+  steps?: number
 }
 
 export type WebTaskFinalOutput = {
@@ -412,6 +414,8 @@ export function createWebTools({
         let liveUrl: string | undefined
         let completed = false
         let outcome = "stopped"
+        // PROGRESS events so far, the same count capSteps stops at
+        let steps = 0
 
         try {
           const stream = await tinyfish.agent.stream(
@@ -433,9 +437,16 @@ export function createWebTools({
             } else if (event.type === "STREAMING_URL") {
               runId = event.run_id
               liveUrl = event.streaming_url
-              yield { status: "running", runId, liveUrl }
+              yield { status: "running", runId, liveUrl, steps }
             } else if (event.type === "PROGRESS") {
-              yield { status: "running", runId, liveUrl, step: event.purpose }
+              steps++
+              yield {
+                status: "running",
+                runId,
+                liveUrl,
+                step: event.purpose,
+                steps,
+              }
             } else if (event.type === "COMPLETE") {
               completed = true
               if (event.error) throw new Error(event.error.message)

@@ -19,23 +19,8 @@ export default async function Page({
   const chat = await getChat(chatId)
   if (!chat) notFound()
 
-  // A group has several bots and so no single desktop to show
-  if (chat.kind === "group") {
-    const bots = await getBots()
-
-    return (
-      <div className="flex h-svh flex-col">
-        <ChatHeader
-          chat={chat}
-          bots={bots.map(({ id, name, avatar }) => ({ id, name, avatar }))}
-        />
-        <Chat
-          chatId={chat.id}
-          bots={chat.bots.map(({ id, name, avatar }) => ({ id, name, avatar }))}
-        />
-      </div>
-    )
-  }
+  const group = chat.kind === "group"
+  const bots = group ? await getBots() : undefined
 
   return (
     <DesktopPanelProvider key={chat.id} chatId={chat.id}>
@@ -44,11 +29,30 @@ export default async function Page({
         <ResizablePanelGroup orientation="horizontal">
           <ResizablePanel id="chat" minSize="30%">
             <div className="flex h-full flex-col">
-              <ChatHeader chat={chat} />
-              <Chat chatId={chat.id} />
+              <ChatHeader
+                chat={chat}
+                bots={bots?.map(({ id, name, avatar }) => ({
+                  id,
+                  name,
+                  avatar,
+                }))}
+              />
+              <Chat
+                chatId={chat.id}
+                bots={
+                  group
+                    ? chat.bots.map(({ id, name, avatar }) => ({
+                        id,
+                        name,
+                        avatar,
+                      }))
+                    : undefined
+                }
+              />
             </div>
           </ResizablePanel>
-          <DesktopPanel name={chat.bots[0].name} />
+          {/* A group has no single desktop, so its panel only shows live browsers */}
+          <DesktopPanel name={chat.bots[0]?.name ?? ""} />
         </ResizablePanelGroup>
       </div>
     </DesktopPanelProvider>
