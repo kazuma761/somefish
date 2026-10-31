@@ -6,7 +6,12 @@ import { z } from "zod"
 
 import { db } from "@/db"
 import { monitors, type Monitor } from "@/db/schema"
-import { isHourlyOrSlowerCron, truncate as clip } from "@/lib/monitor-rules"
+import {
+  WEB_TASK_MAX_STEPS,
+  capSteps,
+  isHourlyOrSlowerCron,
+  truncate as clip,
+} from "@/lib/monitor-rules"
 import { cancelTinyFishMonitor } from "@/lib/monitors"
 import {
   AGENT_STEP_COST,
@@ -414,13 +419,12 @@ export function createWebTools({
               url,
               goal,
               browser_profile: stealth ? "stealth" : "lite",
-              // shortcut: no max_steps cap, the account is refused custom max steps (403) until TinyFish enables the beta; restore `agent_config: { max_steps: 40 }` then
             },
             { signal: abortSignal }
           )
           yield { status: "starting" }
 
-          for await (const event of stream) {
+          for await (const event of capSteps(stream, WEB_TASK_MAX_STEPS)) {
             if (event.type === "STARTED") {
               runId = event.run_id
               Sentry.logger.info("Web task started", {
