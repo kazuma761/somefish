@@ -54,10 +54,18 @@ import {
   WebPreview,
   WebPreviewBody,
 } from "@/components/ai-elements/web-preview"
+import { useOptionalDesktopPanel } from "@/components/desktop-panel"
+import { findLiveBrowser } from "@/components/live-browser"
 import { Badge } from "@/components/ui/badge"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import { toast } from "@/components/ui/toast"
 import type { Bot } from "@/db/schema"
 import { USAGE_LIMIT_ERROR } from "@/lib/billing"
+import { WEB_TASK_MAX_STEPS } from "@/lib/monitor-rules"
 import { usePaywall } from "@/hooks/use-paywall"
 import type { ChatUIMessage } from "@/lib/sandbox-tools"
 import type { chatAgent } from "@/trigger/chat"
@@ -97,8 +105,8 @@ const toolTitles: Record<ToolPart["type"], string> = {
   "tool-viewScreen": "Look at screen",
   "tool-showScreen": "Show screen",
   "tool-handoff": "Hand off",
-  "tool-webSearch": "Search the web",
-  "tool-webFetch": "Read pages",
+  "tool-webSearch": "Search the web with TinyFish",
+  "tool-webFetch": "Read pages with TinyFish",
   "tool-webTask": "Use a website",
   "tool-watchPage": "Watch a page",
   "tool-watchTopic": "Watch a topic",
@@ -163,6 +171,7 @@ function ToolCall({ part, live }: { part: ToolPart; live: boolean }) {
 }
 
 function ToolCallDetails({ part, live }: { part: ToolPart; live: boolean }) {
+  const desktopPanel = useOptionalDesktopPanel()
   const error = part.state === "output-error" ? part.errorText : undefined
 
   if (part.type === "tool-webSearch") {
@@ -250,18 +259,30 @@ function ToolCallDetails({ part, live }: { part: ToolPart; live: boolean }) {
           : output
         : undefined
     const liveUrl = safeUrl(progress?.liveUrl, ["https:"])
+    const stepText = `${
+      progress?.steps
+        ? `Step ${progress.steps} / ${WEB_TASK_MAX_STEPS}`
+        : "Starting"
+    }${progress?.step ? `: ${progress.step}` : ""}`
 
     return (
       <>
         {part.input?.goal ? (
-          <div className="space-y-2">
-            <h4 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          <Collapsible className="space-y-2">
+            <CollapsibleTrigger className="text-xs font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground">
               Goal
-            </h4>
-            <p className="text-sm whitespace-pre-wrap">{part.input.goal}</p>
-          </div>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <p className="text-sm whitespace-pre-wrap">{part.input.goal}</p>
+            </CollapsibleContent>
+          </Collapsible>
         ) : null}
-        {liveUrl ? (
+        {/* A direct chat shows the live browser in its side panel */}
+        {liveUrl && desktopPanel ? (
+          <p className="text-sm text-muted-foreground">
+            Browsing live in the side panel. {stepText}
+          </p>
+        ) : liveUrl ? (
           <div className="space-y-2">
             <WebPreview className="aspect-video h-auto">
               <WebPreviewBody
@@ -271,7 +292,7 @@ function ToolCallDetails({ part, live }: { part: ToolPart; live: boolean }) {
               />
             </WebPreview>
             <p className="text-xs text-muted-foreground">
-              Live, view only{progress?.step ? `: ${progress.step}` : null}
+              Live, view only. {stepText}
             </p>
           </div>
         ) : null}
@@ -282,8 +303,8 @@ function ToolCallDetails({ part, live }: { part: ToolPart; live: boolean }) {
               <>
                 {output.blocked ? (
                   <p className="p-3 text-destructive">
-                    The site showed a captcha or block page, so this result
-                    may be incomplete.
+                    The site showed a captcha or block page, so this result may
+                    be incomplete.
                   </p>
                 ) : null}
                 <CodeBlock
@@ -440,6 +461,16 @@ function ChatMessages({
     }, REPLY_START_TIMEOUT_MS)
     return () => clearTimeout(timer)
   }, [status, stop, chatId])
+  const desktopPanel = useOptionalDesktopPanel()
+  const setLiveBrowser = desktopPanel?.setLiveBrowser
+  const liveBrowser = findLiveBrowser(messages.at(-1), status === "streaming")
+  const { url, step, steps } = liveBrowser ?? {}
+  // Primitive deps, so a new object every render does not loop through the panel
+  useEffect(() => {
+    setLiveBrowser?.(url ? { url, step, steps } : undefined)
+  }, [setLiveBrowser, url, step, steps])
+  useEffect(() => () => setLiveBrowser?.(undefined), [setLiveBrowser])
+
   // The bot the next message goes to, in a group chat
   const [botId, setBotId] = useState(bots[0]?.id)
   // Falls back to the first one when the picked bot is removed from the group
